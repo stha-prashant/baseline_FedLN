@@ -77,7 +77,9 @@ class _Client(fl.client.NumPyClient):
         if not hasattr(self, 'model'):
             self.model = self.model_loader(input_shape=self.input_shape[1:], num_classes=self.num_classes)
 
-        self.optimizer = optim.Adam(self.model.parameters(), lr=config['lr'])
+        # self.optimizer = optim.Adam(self.model.parameters(), lr=config['lr'])
+        self.optimizer = optim.SGD(self.model.parameters(), lr=config['lr'], momentum=config['momentum'])
+        
         self.criterion = nn.CrossEntropyLoss()
 
         if parameters is not None:

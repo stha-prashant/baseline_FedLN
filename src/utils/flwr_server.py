@@ -90,19 +90,20 @@ from collections import OrderedDict
 class _Server(fl.server.Server):
 
     def __init__(self, model_loader, data_loader, num_rounds, num_clients=10,
-                 participation=1.0, init_model=None, log_level=logging.INFO, **kwargs):
+                 participation=1.0, init_model=None, log_level=logging.INFO, run=None,  **kwargs):
 
         self.num_rounds = num_rounds
         self.data, self.num_classes, self.num_samples = data_loader()
         self.model_loader = model_loader
         self.input_shape = self.data.dataset[0][0].shape
         self.init_model = init_model  # Path to initial model
-        self.clients_config = {"epochs": kwargs['train_epochs'], "lr": kwargs['lr']}
+        self.clients_config = {"epochs": kwargs['train_epochs'], "lr": kwargs['lr'], 'momentum': kwargs['momentum']}
         self.num_clients = num_clients
         self.participation = participation
         self.set_strategy(self)
         self._client_manager = fl.server.client_manager.SimpleClientManager()
         self.max_workers = None
+        self.run = run
         logging.getLogger("flower").setLevel(log_level)
 
     def set_max_workers(self, *args, **kwargs):
@@ -176,7 +177,10 @@ class _Server(fl.server.Server):
                     total += labels.size(0)
                     correct += (predicted == labels).sum().item()
             accuracy = 100 * correct / total
+            if self.run:
+                self.run['test/accuracy'].append(accuracy)
             return 0, {"accuracy": accuracy}
+            
         return evaluation_fn
 
     def get_client_config_fn(self):

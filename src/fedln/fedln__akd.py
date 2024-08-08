@@ -11,6 +11,7 @@ import argparse
 import os
 from collections import OrderedDict
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+import neptune
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -21,7 +22,8 @@ parser.add_argument('--num_rounds', type=int, default=10, required=False)
 parser.add_argument('--participation_rate', type=float, default=1.0, required=False)
 parser.add_argument('--batch_size', type=int, default=128, required=False)
 parser.add_argument('--train_epochs', type=int, default=1, required=False)
-parser.add_argument('--lr', type=float, default=1e-3, required=False)
+parser.add_argument('--lr', type=float, default=0.1, required=False)
+parser.add_argument('--momentum', type=float, default=0.9, required=False)
 parser.add_argument('--knn_neighbors', type=int, default=10, required=False)
 parser.add_argument('--noisy_frac', type=float, default=0.8, required=False)
 parser.add_argument('--noise_level', type=float, default=0.4, required=False)
@@ -99,7 +101,8 @@ def create_client(cid):
         def set_parameters(self, parameters, config):
             if not hasattr(self, 'model'):
                 self.model = self.model_loader(input_shape=self.input_shape[1:], num_classes=self.num_classes, embeddings_dim=int(args.embeddings_dims) if self.noisy else None)
-            self.optimizer = optim.Adam(self.model.parameters(), lr=config['lr'])
+            # self.optimizer = optim.Adam(self.model.parameters(), lr=config['lr'])
+            self.optimizer = optim.SGD(self.model.parameters(), lr=config['lr'], momentum=config['momentum'])
             self.criterion = nn.CrossEntropyLoss()
 
             if parameters is not None:
@@ -169,19 +172,25 @@ def create_client(cid):
     load_model = load_available_models()[args.model_name]
     load_train_data = load_available_datasets()[args.dataset_name]
     kwargs = {'batch_size': int(args.batch_size), 'seed': int(args.seed), 'noisy_clients_frac': float(args.noisy_frac),
-              'noise_lvl': float(args.noise_level), 'noise_sparsity': float(args.noise_sparsity), 'device': "cuda:" + os.environ['CUDA_VISIBLE_DEVICES']}
+              'noise_lvl': float(args.noise_level), 'noise_sparsity': float(args.noise_sparsity), 'device': "cuda:" + os.environ['CUDA_VISIBLE_DEVICES'], 'lr': float(args.lr), 'momentum': float(args.momentum)}
     return AKDClient(dataset=args.dataset_name, distil_round=int(args.distil_round), num_neighbors=int(args.knn_neighbors),
                      temp_dir=args.temp_dir, cid=cid, num_clients=int(args.num_clients), model_loader=load_model, data_loader=load_train_data,
                      shuffle=False, **kwargs)
 
 def create_server():
-    os.environ['CUDA_VISIBLE_DEVICES'] = grab_gpu()
+    run = neptune.init_run(
+                        project="mtrip1056/fednl2",
+                        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI1NDA5OTRhYi0zYjkzLTQ4NTEtOTAwYS1hNzZhYjQ2ZjBlN2UifQ==",
+                        name = f"FedLN-AKD",
+                    )  
+    run['parameters'] = args
+    run['parameters/model_name'] = "resnet18"
     from utils.flwr_server import _Server as Server
     load_model = load_available_models()[args.model_name]
     load_test_data = load_available_datasets(train=False)[args.dataset_name]
-    kwargs = {'lr': float(args.lr), 'train_epochs': int(args.train_epochs)}
+    kwargs = {'lr': float(args.lr), 'train_epochs': int(args.train_epochs), 'momentum': float(args.momentum)}
     return Server(num_rounds=int(args.num_rounds), num_clients=int(args.num_clients), participation=float(args.participation_rate),
-                  model_loader=load_model, data_loader=load_test_data, **kwargs)
+                  model_loader=load_model, data_loader=load_test_data, run=run, **kwargs)
 
 def run_simulation():
     server = create_server()
