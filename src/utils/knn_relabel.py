@@ -1,9 +1,13 @@
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
+import pdb
 
 def relabel_with_pretrained_knn(labels, features, num_classes, weights='uniform', num_neighbors=10, noise_theshold=0.15, verbose=False):
 	# Initialize
-	_labels = np.squeeze(np.argmax(labels, axis=-1)).astype(np.int64)
+	if len(labels.shape) == 1:
+		_labels = labels
+	else:
+		_labels = np.squeeze(np.argmax(labels, axis=-1)).astype(np.int64)
 	knn = KNeighborsClassifier(n_neighbors=num_neighbors, weights=weights, n_jobs=1)
 	knn.fit(features, _labels)
 	knn.classes_ = np.arange(num_classes)
@@ -15,7 +19,9 @@ def relabel_with_pretrained_knn(labels, features, num_classes, weights='uniform'
 
 def estimate_noise_with_pretrained_knn(labels, features, num_classes, weights='uniform', num_neighbors=10, noise_theshold=0.15, verbose=False):
 	# Initialize
-	labels = np.squeeze(np.argmax(labels, axis=-1)).astype(np.int64)
+	if len(labels.shape) != 1:
+		labels = np.squeeze(np.argmax(labels, axis=-1)).astype(np.int64)
+	# labels = np.squeeze(np.argmax(labels, axis=-1)).astype(np.int64)
 	knn = KNeighborsClassifier(n_neighbors=num_neighbors, weights=weights, n_jobs=1)
 	knn.fit(features, labels)
 	knn.classes_ = np.arange(num_classes)

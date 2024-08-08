@@ -1,68 +1,94 @@
-import tensorflow as tf
-import tensorflow_addons as tfa
+import torch
+import torchvision.transforms as transforms
+import numpy as np
 
-STD_IMAGENET = tf.reshape((0.2023, 0.1994, 0.2010), shape=(1, 1, 3))
-MEAN_IMAGENET = tf.reshape((0.4914, 0.4822, 0.4465), shape=(1, 1, 3))
-STD_PATHMNIST = tf.reshape((0.5, 0.5, 0.5), shape=(1, 1, 3))
-MEAN_PATHMNIST = tf.reshape((0.5, 0.5, 0.5), shape=(1, 1, 3))
+STD_IMAGENET = torch.tensor([0.2023, 0.1994, 0.2010]).view(1, 1, 3)
+MEAN_IMAGENET = torch.tensor([0.4914, 0.4822, 0.4465]).view(1, 1, 3)
+STD_PATHMNIST = torch.tensor([0.5, 0.5, 0.5]).view(1, 1, 3)
+MEAN_PATHMNIST = torch.tensor([0.5, 0.5, 0.5]).view(1, 1, 3)
 
-def train_prep_cifar(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32) / 255.0
-	x = tf.image.random_flip_left_right(x)
-	x = tf.image.pad_to_bounding_box(x, 4, 4, 40, 40)
-	x = tf.image.random_crop(x, (32, 32, 3))
-	x = (x - MEAN_IMAGENET) / STD_IMAGENET
-	return x, y
+def train_prep_cifar():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomHorizontalFlip(),
+        transforms.Pad(4),
+        transforms.RandomCrop(32),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+    ])
 
-def valid_prep_cifar(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32) / 255.0
-	x = (x - MEAN_IMAGENET) / STD_IMAGENET
-	return x, y
+def valid_prep_cifar():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+    ])
 
-def train_prep_fmnist(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32) / 255.0
-	x = tf.expand_dims(x, axis=-1)
-	x = tf.image.random_flip_left_right(x)
-	return x, y
+def train_prep_fmnist():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ])
 
-def valid_prep_fmnist(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32) / 255.0
-	x = tf.expand_dims(x, axis=-1)
-	return x, y
+def valid_prep_fmnist():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.ToTensor(),
+    ])
 
-def train_prep_pathmnist(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32) / 255.0
-	x = (x - MEAN_PATHMNIST) / STD_PATHMNIST
-	return x, y
+def train_prep_pathmnist():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=MEAN_PATHMNIST.numpy(), std=STD_PATHMNIST.numpy()),
+    ])
 
-def valid_prep_pathmnist(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32) / 255.0
-	x = (x - MEAN_PATHMNIST) / STD_PATHMNIST
-	return x, y
+def valid_prep_pathmnist():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=MEAN_PATHMNIST.numpy(), std=STD_PATHMNIST.numpy()),
+    ])
 
-def train_prep_eurosat(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32)
-	x = tf.image.random_flip_left_right(x)
-	x = tf.image.pad_to_bounding_box(x, 4, 4, 72, 72)
-	x = tf.image.random_crop(x, (64, 64, 3))
-	return x, y
+def train_prep_eurosat():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.RandomHorizontalFlip(),
+        transforms.Pad(4),
+        transforms.RandomCrop(64),
+        transforms.ToTensor(),
+    ])
 
-def valid_prep_eurosat(x, y):
-	x = tf.image.convert_image_dtype(x, tf.float32)
-	return x, y
+def valid_prep_eurosat():
+    return transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.ToTensor(),
+    ])
 
-def cutout_cifar(images, labels):
-	_images = tfa.image.cutout(images, mask_size=(16,16))
-	return _images, labels
+def cutout(images, mask_size):
+    _, h, w = images.shape
+    y = np.random.randint(h)
+    x = np.random.randint(w)
+    y1 = np.clip(y - mask_size // 2, 0, h)
+    y2 = np.clip(y + mask_size // 2, 0, h)
+    x1 = np.clip(x - mask_size // 2, 0, w)
+    x2 = np.clip(x + mask_size // 2, 0, w)
+    images[:, y1:y2, x1:x2] = 0
+    return images
 
-def cutout_fmnist(images, labels):
-	_images = tfa.image.cutout(images, mask_size=(14,14))
-	return _images, labels
+def cutout_cifar(images):
+    images = cutout(images, 16)
+    return images
 
-def cutout_pathmnist(images, labels):
-	_images = tfa.image.cutout(images, mask_size=(14,14))
-	return _images, labels
+def cutout_fmnist(images):
+    images = cutout(images, 14)
+    return images
 
-def cutout_eurosat(images, labels):
-	_images = tfa.image.cutout(images, mask_size=(32,32))
-	return _images, labels
+def cutout_pathmnist(images):
+    images = cutout(images, 14)
+    return images
+
+def cutout_eurosat(images):
+    images = cutout(images, 32)
+    return images

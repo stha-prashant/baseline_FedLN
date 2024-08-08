@@ -25,7 +25,7 @@ def noise_from_level_sparsity(labels, num_classes, noise_lvl, noise_spar, noise_
 
 	return noisy_labels, achieved_noise_lvl
 
-def inject_synthetic_noise_to_labels(cid, labels, num_classes, level, sparsity, seed, theshold=1e-2, as_one_hot=True):
+def inject_synthetic_noise_to_labels(cid, labels, num_classes, level, sparsity, seed, theshold=1e-2, as_one_hot=False):
 	noisy_labels, achieved_noise_lvl = noise_from_level_sparsity(labels=labels, num_classes=num_classes, as_one_hot=as_one_hot, noise_lvl=level, noise_spar=sparsity, noise_seed=seed)
 	print(f"[Client {cid}] - Achived noise level is {achieved_noise_lvl:.04f} and desired noise level is {level:.04f}.")
 	assert np.abs(achieved_noise_lvl-level) < theshold, f'Mean noise level is not reached. Got {achieved_noise_lvl:.04f}, while desired levels set to {level:.04f}. Set a higher threshold!'
