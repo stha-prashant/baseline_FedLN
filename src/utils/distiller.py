@@ -18,6 +18,7 @@ class Distiller(tf.keras.Model):
 		self.temperature = temperature
 
 	def train_step(self, data):
+		print("-----------------running distillation")
 		((x, y), idxs) = data
 		supervision_signal = self.table.lookup(tf.cast(idxs, dtype=tf.int32))
 		with tf.GradientTape() as tape:

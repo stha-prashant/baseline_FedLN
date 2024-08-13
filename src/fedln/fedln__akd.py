@@ -18,7 +18,7 @@ parser.add_argument('--num_rounds',				type=int,	default=10,					required=False)
 parser.add_argument('--participation_rate',		type=float,	default=1.0,				required=False)
 parser.add_argument('--batch_size',				type=int,	default=128,				required=False)
 parser.add_argument('--train_epochs',			type=int,	default=1,					required=False)
-parser.add_argument('--lr',						type=float,	default=1e-3,				required=False)
+parser.add_argument('--lr',						type=float,	default=0.1,				required=False)
 parser.add_argument('--knn_neighbors',			type=int,	default=10,					required=False)
 parser.add_argument('--noisy_frac',				type=float,	default=0.8,				required=False)
 parser.add_argument('--noise_level',			type=float,	default=0.4,				required=False)
@@ -37,7 +37,7 @@ if Path(args.temp_dir).exists() and Path(args.temp_dir).is_dir(): shutil.rmtree(
 def load_available_datasets(train=True):
 	import data
 	return {
-		'eurosat': data.load_eurosat if train else data.load_eurosat_test, 
+		# 'eurosat': data.load_eurosat if train else data.load_eurosat_test, 
 		'cifar10': data.load_cifar if train else data.load_cifar_test,
     }
 
@@ -52,6 +52,7 @@ def grab_gpu(memory_limit=0.91):
 	while len(GPUtil.getAvailable(order='memory', limit=len(GPUtil.getGPUs()), maxLoad=1.0, maxMemory=memory_limit)) == 0: sleep(1)
 	cuda_device_ids = GPUtil.getAvailable(order='memory', limit=len(GPUtil.getGPUs()), maxLoad=1.0, maxMemory=memory_limit)
 	cuda_device_ids.extend("") # Fix no gpu issue
+	print(f"-----------Cuda devices: {cuda_device_ids[0]}")
 	return str(cuda_device_ids[0])
 
 def create_client(cid):
@@ -131,7 +132,9 @@ def create_client(cid):
             shuffle=False, **kwargs)
 
 def create_server():
+	print("Creating server")
 	os.environ['CUDA_VISIBLE_DEVICES'] = grab_gpu()
+	print("Grabbed gpu")
 	from utils.flwr_server import _Server as Server
 	load_model = load_available_models()[args.model_name]
 	load_test_data = load_available_datasets(train=False)[args.dataset_name]
