@@ -127,8 +127,10 @@ class _Server(fl.server.Server):
     def get_parameters(self, config={}):
         """ Get model weights """
         # return [param.cpu().numpy() for param in self.model.parameters()]
-        print("Count: ----------", (len([val.cpu().numpy() for _, val in self.model.state_dict().items()])))
-        return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+        try:
+            return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+        except:
+            return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
     def set_parameters(self, parameters, config):
         """ Set model weights """

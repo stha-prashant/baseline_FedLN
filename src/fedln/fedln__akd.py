@@ -12,7 +12,6 @@ import os
 from collections import OrderedDict
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import neptune
-
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 os.environ['CUDA_DEVICE_ORDER'] = "PCI_BUS_ID"
@@ -22,7 +21,7 @@ parser.add_argument('--num_rounds', type=int, default=10, required=False)
 parser.add_argument('--participation_rate', type=float, default=1.0, required=False)
 parser.add_argument('--batch_size', type=int, default=128, required=False)
 parser.add_argument('--train_epochs', type=int, default=1, required=False)
-parser.add_argument('--lr', type=float, default=0.1, required=False)
+parser.add_argument('--lr', type=float, default=0.3, required=False)
 parser.add_argument('--momentum', type=float, default=0.9, required=False)
 parser.add_argument('--knn_neighbors', type=int, default=10, required=False)
 parser.add_argument('--noisy_frac', type=float, default=0.8, required=False)
@@ -76,7 +75,7 @@ def create_client(cid):
     import torch
     import torch.nn as nn
     import torch.optim as optim
-    from torch.utils.data import DataLoader
+    from torch.utils.data import DataLoader, TensorDataset
 
     #############################################
     # Override Client to use Noise-Aware FedAvg #
@@ -100,7 +99,7 @@ def create_client(cid):
 
         def set_parameters(self, parameters, config):
             if not hasattr(self, 'model'):
-                self.model = self.model_loader(input_shape=self.input_shape[1:], num_classes=self.num_classes, embeddings_dim=int(args.embeddings_dims) if self.noisy else None)
+                self.model = self.model_loader(input_shape=self.input_shape[1:], num_classes=self.num_classes, embeddings_dim=int(args.embeddings_dims)) # TODO: removed if self.noisy flag
             # self.optimizer = optim.Adam(self.model.parameters(), lr=config['lr'])
             self.optimizer = optim.SGD(self.model.parameters(), lr=config['lr'], momentum=config['momentum'])
             self.criterion = nn.CrossEntropyLoss()
@@ -109,6 +108,8 @@ def create_client(cid):
                 # if self.noisy:
                 #     parameters.extend(self.model.get_weights()[-2:] if self.embeddings_params is None else self.embeddings_params)
                 #TODO: implement above, combine state dict of current model and embedding layer separately
+                # assuming that self.noisy is always set to be true for training, we always use the embedding layer
+                # this seems to be a flag to prevent edge case (at initial loading of parameters maybe than a part of method
                 params_dict = zip(self.model.state_dict().keys(), parameters)
                 state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
                 self.model.load_state_dict(state_dict, strict=True)
@@ -122,7 +123,7 @@ def create_client(cid):
                 #     images, labels = batch
                 #     all_data.append((images, labels))
                 # all_data = torch.cat([d[0] for d in all_data], dim=0)
-                
+                # breakpoint()
                 with open(f'{args.embeddings_dir}/{self.dataset}.npy', 'rb') as f:
                     _features = np.squeeze(np.load(f)[_idxs])
                 estimated_noise = estimate_noise_with_pretrained_knn(labels=_labels, features=_features, num_classes=self.num_classes, num_neighbors=self.num_neighbors, verbose=False)
@@ -131,40 +132,53 @@ def create_client(cid):
                 if estimated_noise > 0.0:
                     with open(f'{args.temp_dir}/noise_{self.cid}.npy', 'wb') as f:
                         np.save(f, np.array([estimated_noise]))
-    
+
             self.set_parameters(parameters, config)
    
-            if self.noisy:
-                _data, _, _, _, _idxs = self.data_loader(shard_id=int(self.cid), num_shards=self.num_clients, shuffle=False)
-                all_data = []
-                for batch in _data:
-                    images, labels = batch
-                    all_data.append((images, labels))
-                all_data = torch.cat([d[0] for d in all_data], dim=0)
-                with open(f'{args.embeddings_dir}/{self.dataset}.npy', 'rb') as f:
-                    _features = np.squeeze(np.load(f)[_idxs])
-                self.model = Distiller(model=self.model, features=_features, idxs=np.squeeze(_idxs))
-                self.embeddings_dim = 512
-                self.set_parameters(parameters=None, config=config)
-                self.data = DataLoader(list(zip(all_data, np.squeeze(_idxs))), batch_size=128, shuffle=True)
+            # if self.noisy:
+            _data, _, _, _, _idxs = self.data_loader(shard_id=int(self.cid), num_shards=self.num_clients, shuffle=False)
+            all_images, all_labels = [], []
+            for batch in _data:
+                images, labels = batch
+                all_images.append(images)
+                all_labels.append(labels)
+            
+            all_images = torch.cat(all_images, dim=0)
+            all_labels = torch.cat(all_labels, dim=0)
+            with open(f'{args.embeddings_dir}/{self.dataset}.npy', 'rb') as f:
+                _features = np.squeeze(np.load(f)[_idxs])
+            self.model = Distiller(model=self.model, features=_features, idxs=np.squeeze(_idxs), optimizer=self.optimizer)
+            self.embeddings_dim = 512
+            self.set_parameters(parameters=None, config=config)
+            self.data = DataLoader(TensorDataset(all_images, all_labels, torch.tensor(_idxs)), batch_size=128, shuffle=True)
 
             self.model.train()
             self.model = self.model.to(self.device)
             for epoch in range(config['epochs']):
                 for batch in self.data:
-                    images, labels = batch
-                    images, labels = images.to(self.device), labels.to(self.device)
-                    self.optimizer.zero_grad()
-                    outputs = self.model(images)
-                    loss = self.criterion(outputs, labels)
-                    loss.backward()
-                    self.optimizer.step()
-            #TODO: implement below line
-            # self.embeddings_params = self.model.get_weights()[-2:]
+                    # images, labels = batch
+                    # images, labels = images.to(self.device), labels.to(self.device)
+                    # self.optimizer.zero_grad()
+                    # outputs = self.model(images)
+                    # loss = self.criterion(outputs, labels)
+                    # loss.backward()
+                    # self.optimizer.step()
+                    assert len(batch) == 3, f"{len(batch)}, {batch[0].shape}"
+                    if batch[0][0].shape == 1:
+                        print("single batch detected, continue---------")
+                        continue
+                    h = self.model(batch)
+                    student_loss = h['student_loss']
+                    distillation_loss = h['distillation_loss']
+                
+                    
+            #TODO: implement below line in a better way
+            # self.embeddings_params = self.model.fc
             # metrics = {'accuracy': float(h.history['accuracy'][-1]), 'loss': float(h.history['loss'][-1])}
             metrics = {
                 'accuracy': self.evaluate_accuracy(),
-                'loss': loss.item()
+                # 'student_loss': student_loss,
+                # 'distillation_loss': distillation_loss
             }
             return self.get_parameters(), self.num_samples, metrics
     #############################################
@@ -196,7 +210,7 @@ def run_simulation():
     server = create_server()
     print("Created Server, starting simulation")
     history = fl.simulation.start_simulation(client_fn=create_client, server=server, num_clients=int(args.num_clients),
-                                             ray_init_args={"ignore_reinit_error": True, "num_cpus": int(args.num_clients), },
+                                             ray_init_args={"ignore_reinit_error": True, "num_cpus": int(args.num_clients), "_temp_dir": "/mnt/Enterprise2/ray_logs" },
                                              config=fl.server.ServerConfig(num_rounds=int(args.num_rounds), round_timeout=None), )
     if Path(args.temp_dir).exists() and Path(args.temp_dir).is_dir():
         shutil.rmtree(Path(args.temp_dir))

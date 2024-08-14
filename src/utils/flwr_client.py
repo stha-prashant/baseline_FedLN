@@ -89,9 +89,10 @@ class _Client(fl.client.NumPyClient):
 
     def get_parameters(self, config={}):
         """ Get model weights """
-        print("Count: ----------", (len([val.cpu().numpy() for _, val in self.model.state_dict().items()])))
-
-        return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+        try:
+            return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+        except:
+            return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
     def fit(self, parameters, config):
         # Set parameters
@@ -124,9 +125,9 @@ class _Client(fl.client.NumPyClient):
         total = 0
         with torch.no_grad():
             for batch in self.data:
-                images, labels = batch
+                images, labels, idxs = batch
                 images, labels = images.to(self.device), labels.to(self.device)
-                outputs = self.model(images)
+                outputs = self.model.forward_only(images)
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()

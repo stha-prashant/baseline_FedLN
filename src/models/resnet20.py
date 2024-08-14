@@ -125,133 +125,173 @@ import torch.nn.functional as F
 from torchsummary import summary
 from torchvision import models
 
-class ResNet20(nn.Module):
-    def __init__(self, input_shape, n_classes, l2_reg=1e-4, group_sizes=(2, 2, 2), features=(16, 32, 64), strides=(1, 2, 2),
-                 shortcut_type="B", block_type="preactivated", first_conv={"filters": 16, "kernel_size": 3, "strides": 1},
-                 dropout=0, cardinality=1, bottleneck_width=4, preact_shortcuts=True, embeddings_dim=None):
-        super(ResNet20, self).__init__()
-        self.l2_reg = l2_reg
-        self.shortcut_type = shortcut_type
-        self.dropout = dropout
-        self.bottleneck_width = bottleneck_width
-        self.preact_shortcuts = preact_shortcuts
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-        self.first_conv = self.regularized_padded_conv(3, first_conv["filters"], first_conv["kernel_size"], stride=first_conv["strides"], padding=1)
+
+class ResNet20(nn.Module):
+    def __init__(self, input_shape, n_classes=10, l2_reg=1e-4, group_sizes=(2, 2, 2), features=(16, 32, 64),
+                 strides=(1, 2, 2), shortcut_type="B", block_type="preactivated", first_conv={"filters": 16, "kernel_size": 3, "strides": 1},
+                 dropout=0, cardinality=1, bootleneck_width=4, preact_shortcuts=True, embeddings_dim=None):
+        super(ResNet20, self).__init__()
+
+        self.shortcut_type = shortcut_type
+        self.cardinality = cardinality
+        self.dropout = dropout
+        self.bootleneck_width = bootleneck_width
+        self.preact_shortcuts = preact_shortcuts
+        self.input_channels = input_shape[0]
 
         block_types = {
             "preactivated": self.preactivation_block,
-            "bottleneck": self.bottleneck_block,
+            "bootleneck": self.bootleneck_block,
             "original": self.original_block
         }
-        self.selected_block = block_types[block_type]
-        
-        layers = []
-        for block_idx, (group_size, feature, stride) in enumerate(zip(group_sizes, features, strides)):
-            layers.append(self.group_of_blocks(self.selected_block, group_size, feature, stride, block_idx))
-        
-        self.blocks = nn.Sequential(*layers)
 
-        self.final_bn_relu = nn.Sequential(
-            nn.BatchNorm2d(features[-1]),
-            nn.ReLU(inplace=True)
-        )
+        self.selected_block = block_types[block_type]
+        self.conv1 = self.regularized_padded_conv(first_conv["filters"], first_conv["kernel_size"], stride=first_conv["strides"])
+
+        if block_type == "original":
+            self.bn_relu1 = self.bn_relu_block(first_conv["filters"])
         
+        self.blocks = nn.ModuleList()
+        for block_idx, (group_size, feature, stride) in enumerate(zip(group_sizes, features, strides)):
+            block = self.group_of_blocks(self.selected_block, group_size, feature, stride, block_idx)
+            self.blocks.append(block)
+
+        if block_type != "original":
+            self.bn_relu2 = self.bn_relu_block(features[-1])
+
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(features[-1], n_classes)
 
         if embeddings_dim is not None:
             self.embeddings = nn.Linear(features[-1], embeddings_dim)
+            self.output_mode = 'embeddings'
         else:
-            self.embeddings = None
+            self.output_mode = 'classifier'
 
-    def regularized_padded_conv(self, in_channels,  out_channels, kernel_size, stride=1, padding=0):
-        return nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=False)
+    def regularized_padded_conv(self, out_channels, kernel_size, stride=1):
+        return nn.Conv2d(in_channels=self.input_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=1, bias=False)
 
-    def bn_relu(self, x):
-        x = nn.BatchNorm2d(x.size(1))(x)
-        return nn.ReLU(inplace=True)(x)
+    def bn_relu_block(self, num_features):
+        return nn.Sequential(
+            nn.BatchNorm2d(num_features),
+            nn.ReLU()
+        )
 
-    def shortcut(self, x, out_channels, stride, mode):
-        in_channels = x.size(1)
-        if in_channels == out_channels:
+    def shortcut(self, x, filters, stride, mode):
+        if x.shape[1] == filters:
             return x
         elif mode == "B":
-            return self.regularized_padded_conv(in_channels, out_channels, kernel_size=1, stride=stride)(x)
+            return self.regularized_padded_conv(filters, 1, stride=stride)(x)
         elif mode == "B_original":
-            x = self.regularized_padded_conv(in_channels, out_channels, kernel_size=1, stride=stride)(x)
-            return nn.BatchNorm2d(out_channels)(x)
+            x = self.regularized_padded_conv(filters, 1, stride=stride)(x)
+            return nn.BatchNorm2d(filters)(x)
         elif mode == "A":
-            return F.pad(F.max_pool2d(x, kernel_size=1, stride=stride) if stride > 1 else x, (0, out_channels - in_channels, 0, 0))
+            # Correct padding logic for mode "A"
+            pad = filters - x.shape[1]
+            out = F.avg_pool2d(x, 1, stride)
+            return F.pad(out, (0, 0, 0, 0, 0, pad))
         else:
             raise KeyError("Parameter shortcut_type not recognized!")
 
-    def original_block(self, x, out_channels, stride=1):
-        in_channels = x.size(1)
-        c1 = self.regularized_padded_conv(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)(x)
-        c2 = self.regularized_padded_conv(in_channels, out_channels, kernel_size=3, padding=1)(self.bn_relu(c1))
-        c2 = nn.BatchNorm2d(out_channels)(c2)
+    def original_block(self, x, filters, stride=1):
+        c1 = self.regularized_padded_conv(filters, 3, stride=stride)(x)
+        c2 = self.regularized_padded_conv(filters, 3)(self.bn_relu_block(c1.shape[1])(c1))
+        c2 = nn.BatchNorm2d(filters)(c2)
 
         mode = "B_original" if self.shortcut_type == "B" else self.shortcut_type
-        x = self.shortcut(x, out_channels, stride, mode=mode)
-        x = x + c2
-        return nn.ReLU(inplace=True)(x)
+        x = self.shortcut(x, filters, stride, mode=mode)
+        x = torch.add(x, c2)
+        return F.relu(x)
 
-    def preactivation_block(self, x, out_channels, stride=1, preact_block=False):
-        in_channels = x.size(1)
-        flow = self.bn_relu(x)
+    def preactivation_block(self, x, filters, stride=1, preact_block=False):
+        flow = self.bn_relu_block(x.shape[1])(x)
         if preact_block:
             x = flow
-        c1 = self.regularized_padded_conv(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)(flow)
+        c1 = self.regularized_padded_conv(filters, 3, stride=stride)(flow)
         if self.dropout:
             c1 = nn.Dropout(self.dropout)(c1)
-        c2 = self.regularized_padded_conv(in_channels, out_channels, kernel_size=3, padding=1)(self.bn_relu(c1))
-        x = self.shortcut(x, out_channels, stride, mode=self.shortcut_type)
+        c2 = self.regularized_padded_conv(filters, 3)(self.bn_relu_block(c1.shape[1])(c1))
+        x = self.shortcut(x, filters, stride, mode=self.shortcut_type)
         return x + c2
 
-    def bottleneck_block(self, x, out_channels, stride=1, preact_block=False):
-        in_channels = x.size(1)
-        flow = self.bn_relu(x)
+    def bootleneck_block(self, x, filters, stride=1, preact_block=False):
+        flow = self.bn_relu_block(x.shape[1])(x)
         if preact_block:
             x = flow
-        c1 = self.regularized_padded_conv(in_channels, out_channels // self.bottleneck_width, kernel_size=1)(flow)
-        c2 = self.regularized_padded_conv(in_channels, out_channels // self.bottleneck_width, kernel_size=3, stride=stride, padding=1)(self.bn_relu(c1))
-        c3 = self.regularized_padded_conv(in_channels, out_channels, kernel_size=1)(self.bn_relu(c2))
-        x = self.shortcut(x, out_channels, stride, mode=self.shortcut_type)
+        c1 = self.regularized_padded_conv(filters // self.bootleneck_width, 1)(flow)
+        c2 = self.regularized_padded_conv(filters // self.bootleneck_width, 3, stride=stride)(self.bn_relu_block(c1.shape[1])(c1))
+        c3 = self.regularized_padded_conv(filters, 1)(self.bn_relu_block(c2.shape[1])(c2))
+        x = self.shortcut(x, filters, stride, mode=self.shortcut_type)
         return x + c3
 
-    def group_of_blocks(self, block_type, num_blocks, out_channels, stride, block_idx=0):
+    def group_of_blocks(self, block_type, num_blocks, filters, stride, block_idx=0):
         layers = []
         preact_block = self.preact_shortcuts or block_idx == 0
-        layers.append(block_type(self, out_channels, stride, preact_block=preact_block))
-        for i in range(num_blocks - 1):
-            layers.append(block_type(self, out_channels))
+        layers.append(block_type(filters, stride=stride, preact_block=preact_block))
+        for i in range(1, num_blocks):
+            layers.append(block_type(filters))
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.first_conv(x)
-        if self.selected_block == self.original_block:
-            x = self.bn_relu(x)
-        x = self.blocks(x)
-        if self.selected_block != self.original_block:
-            x = self.final_bn_relu(x)
+        x = self.conv1(x)
+
+        if hasattr(self, 'bn_relu1'):
+            x = self.bn_relu1(x)
+
+        for block in self.blocks:
+            x = block(x)
+
+        if hasattr(self, 'bn_relu2'):
+            x = self.bn_relu2(x)
+
         x = self.global_avg_pool(x)
         x = torch.flatten(x, 1)
-        out = self.fc(x)
-        if self.embeddings is not None:
-            embeddings = self.embeddings(x)
-            return out, embeddings
-        return out
+        if self.output_mode == 'embeddings':
+            x = self.embeddings(x)
+        else:
+            x = self.fc(x)
+        return x
+
 
 # def load_model(input_shape, num_classes, l2_reg=1e-4, shortcut_type="A", block_type="original", embeddings_dim=None):
 #     return ResNet20(input_shape=input_shape, n_classes=num_classes, l2_reg=l2_reg, embeddings_dim=embeddings_dim,
 #                     group_sizes=(3, 3, 3), features=(16, 32, 64), strides=(1, 2, 2),
 #                     first_conv={"filters": 16, "kernel_size": 3, "strides": 1},
 #                     shortcut_type=shortcut_type, block_type=block_type, preact_shortcuts=False)
+class ResNet50(nn.Module):
+    def __init__(self, num_classes=10, embeddings_dim=512):
+        super(ResNet50, self).__init__()
+        self.backbone = models.resnet18()
+        # self.backbone = ResNet20()
+
+        self.fc = nn.Linear(self.backbone.fc.in_features, num_classes)
+        # if embeddings_dim is not None:
+        self.embeddings = nn.Linear(self.backbone.fc.in_features, embeddings_dim) # hardcoded here
+        self.backbone.fc = nn.Identity()
+        
+
+    def forward(self, input):
+        return self.fc(self.backbone(input))
+
+    def forward_embeddings(self, input):
+        # breakpoint()
+        x = self.backbone(input)
+        return self.fc(x), self.embeddings(x)
+
+
 from copy import deepcopy
 def load_model(input_shape, num_classes, l2_reg=1e-4, shortcut_type="A", block_type="original", embeddings_dim=None):
-    model = models.resnet18()
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
-    return model
+    # model = models.resnet18()
+    # model.fc = nn.Linear(model.fc.in_features, num_classes)
+    # if embeddings_dim is not None:
+    #     model.embeddings = nn.Linear(model.fc.in_features, embeddings_dim)
+    print('-----numclasses: ', num_classes, embeddings_dim)
+    return ResNet50(num_classes=num_classes)
+    # return model
 
 def load_initial_model_weights(input_shape, num_classes):
     model = load_model(input_shape, num_classes)

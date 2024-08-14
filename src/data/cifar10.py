@@ -98,7 +98,7 @@ def load_cifar(shard_id=0, num_shards=None, batch_size=128, seed=42, noisy_clien
     ])
     
     dataset = CIFAR10Dataset(images, labels, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     
     return dataloader, num_classes, labels.shape[0], labels, idxs if num_shards is not None else None
 
@@ -114,7 +114,7 @@ def load_cifar_test(batch_size=128):
     ])
     
     dataset = CIFAR10Dataset(images, labels, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     
     return dataloader, num_classes, labels.shape[0]
 

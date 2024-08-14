@@ -55,17 +55,19 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-
+import pdb
 class Distiller(nn.Module):
-    def __init__(self, model, features, idxs, device='cuda'):
+    def __init__(self, model, features, idxs, device='cuda:0', optimizer=None):
         super(Distiller, self).__init__()
         self.model = model
         self.features = torch.tensor(features, dtype=torch.float32).to(device)
         self.idxs = torch.tensor(idxs, dtype=torch.int32).to(device)
-        self.device = device
+        self.device = "cuda:0" # TODO: hard coded here
+
         
         # Create a dictionary to simulate a lookup table
         self.table = {idx.item(): feature for idx, feature in zip(self.idxs, self.features)}
+        self.compile(optimizer=optimizer, loss_fn=nn.CrossEntropyLoss(), metrics=None, alpha=10, temperature=4.0)
 
     def compile(self, optimizer, loss_fn, metrics, alpha=10.0, temperature=4.0):
         self.optimizer = optimizer
@@ -75,15 +77,16 @@ class Distiller(nn.Module):
         self.temperature = temperature
         self.distillation_loss_fn = nn.L1Loss()
 
-    def train_step(self, data):
-        (x, y), idxs = data
+    def forward(self, data):
+        # print("0000000000000000000000000000000000000000000000")
+        x, y, idxs = data
         x, y, idxs = x.to(self.device), y.to(self.device), idxs.to(self.device)
         
         # Lookup supervision signal
         supervision_signal = torch.stack([self.table[idx.item()] for idx in idxs]).to(self.device)
         
         self.optimizer.zero_grad()
-        preds, embeddings = self.model(x)
+        preds, embeddings = self.model.forward_embeddings(x)
         
         # Calculate losses
         student_loss = self.loss_fn(preds, y)
@@ -95,14 +98,17 @@ class Distiller(nn.Module):
         self.optimizer.step()
         
         # Update the metrics
-        for metric in self.metrics:
-            metric.update(preds, y)
+        # for metric in self.metrics:
+        #     metric.update(preds, y)
         
         return {
-            "loss": loss.item(),
-            "accuracy": self.metrics[0].compute(),
-            "distil_loss": distillation_loss.item(),
+            "student_loss": student_loss.item(),
+            # "accuracy": self.metrics[0].compute(),
+            "distillation_loss": distillation_loss.item(),
         }
+
+    def forward_only(self, images):
+        return self.model(images)
 
     def test_step(self, data):
         x, y = data
